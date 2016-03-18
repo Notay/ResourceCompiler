@@ -24,6 +24,7 @@ namespace ResourceCompiler
 		private static readonly string alPath = Path.Combine(sdkPath, "al.exe");
 		private static readonly string cscPath = Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "csc.exe");
 
+		private static bool ignoreEmptyDefault = false;
 		private static bool resourceMainAtRoot = true;
 		private static string resourceNamespace = "MyResources";
 		private static string resourcePath = "Resources";
@@ -43,6 +44,9 @@ namespace ResourceCompiler
 				configTryGet(config, "ResourceNamespace", ref resourceNamespace);
 				configTryGet(config, "ResourcePath", ref resourcePath);
 				configTryGet(config, "ResourceSourcePath", ref resourceSourcePath);
+
+				configTryGet(config, "ResourceMainAtRoot", ref resourceMainAtRoot);
+				configTryGet(config, "IgnoreEmptyDefault", ref ignoreEmptyDefault);
 			}
 			catch (System.Configuration.ConfigurationErrorsException)
 			{
@@ -54,69 +58,12 @@ namespace ResourceCompiler
 
 			Directory.CreateDirectory(resourcePath);
 
-			string[] files;
 
-
-			// Generate resources for default embedded resources.
-			Console.WriteLine("\nGenerating default resources...\n");
-			files = getRawResourcesFiles(resourceSourcePath, SearchOption.TopDirectoryOnly);
-			if (files.Length == 0)
+			// Generate default resources lib.
+			if (!generateDefaultResourceLib() && !ignoreEmptyDefault)
 			{
-				Console.WriteLine("No default resource sources found!");
-				waitAnyKey();
+				writeFail("No default resource sources found!");
 				return;
-			}
-			foreach (var file in files)
-			{
-				var name = Path.GetFileNameWithoutExtension(file);
-
-				var fileNamespace = resourceNamespace;
-				var names = name.Split('.');
-				if (names.Length > 1)
-				{
-					fileNamespace = resourceNamespace + "." + string.Join(".", names.Take(names.Length - 1));
-					name = names[names.Length - 1];
-				}
-
-				var outfile = Path.Combine(resourcePath, fileNamespace + "." + name + ".resources");
-
-				var classPath = Path.Combine(resourcePath, name + ".cs");
-				var classinfo = "/str:cs," + string.Join(",", fileNamespace.ReplaceSpace(), name.ReplaceSpace(), classPath.Quote());
-
-				exec(resgenPath, string.Join(" ", file.Quote(), outfile.Quote(), classinfo, "/publicClass"));
-			}
-
-
-			// Compile helper classes and embed default resources in to lib.
-			Console.WriteLine("\nCompiling default resources...\n");
-			{
-				files = Directory.GetFiles(resourcePath, "*.resources", SearchOption.TopDirectoryOnly);
-				if (files.Length == 0)
-				{
-					waitAnyKey("Unable to continue.");
-					return;
-				}
-
-				var arguments = new StringBuilder();
-				arguments.Append("/target:library");
-				if (resourceMainAtRoot)
-					arguments.Append(" \"/out:" + resourceNamespace + ".dll\"");
-				else
-					arguments.Append(" \"/out:" + Path.Combine(resourcePath, resourceNamespace + ".dll\""));
-				foreach (var file in files)
-					arguments.Append(" /res:" + file.Quote());
-				arguments.Append(" " + Path.Combine(resourcePath, "*.cs"));
-
-				exec(cscPath, arguments.ToString());
-
-				Console.WriteLine("Deleting temp files...");
-				// delete .resources files
-				foreach (var file in files)
-					File.Delete(file);
-				// delete .cs files
-				files = Directory.GetFiles(resourcePath, "*.cs");
-				foreach (var file in files)
-					File.Delete(file);
 			}
 
 			// Generate resources for soecific cultures.
@@ -155,6 +102,7 @@ namespace ResourceCompiler
 			waitAnyKey();
 		}
 
+		/// <summary> Make sure we can find needed files: ResGen.exe al.exe csc.exe </summary>
 		private static bool checkPaths()
 		{
 			if (!Directory.Exists(sdkPath))
@@ -170,6 +118,67 @@ namespace ResourceCompiler
 			return false;
 		}
 
+		/// <summary> Generates default resrouces and compiles them with helper classes. </summary>
+		private static bool generateDefaultResourceLib()
+		{
+			// Generate the resource and script files.
+			Console.WriteLine("\nGenerating default resources...\n");
+			var files = getRawResourcesFiles(resourceSourcePath, SearchOption.TopDirectoryOnly);
+			if (files.Length == 0)
+				return false;
+			foreach (var file in files)
+			{
+				var name = Path.GetFileNameWithoutExtension(file);
+
+				var fileNamespace = resourceNamespace;
+				var names = name.Split('.');
+				if (names.Length > 1)
+				{
+					fileNamespace = resourceNamespace + "." + string.Join(".", names.Take(names.Length - 1));
+					name = names[names.Length - 1];
+				}
+
+				var outfile = Path.Combine(resourcePath, fileNamespace + "." + name + ".resources");
+
+				var classPath = Path.Combine(resourcePath, name + ".cs");
+				var classinfo = "/str:cs," + string.Join(",", fileNamespace.ReplaceSpace(), name.ReplaceSpace(), classPath.Quote());
+
+				exec(resgenPath, string.Join(" ", file.Quote(), outfile.Quote(), classinfo, "/publicClass"));
+			}
+
+
+			// Compile scripts and embed default resources in to lib.
+			Console.WriteLine("\nCompiling default resources...\n");
+			{
+				files = Directory.GetFiles(resourcePath, "*.resources", SearchOption.TopDirectoryOnly);
+				if (files.Length == 0)
+					return false;
+
+				var arguments = new StringBuilder();
+				arguments.Append("/target:library");
+				if (resourceMainAtRoot)
+					arguments.Append(" \"/out:" + resourceNamespace + ".dll\"");
+				else
+					arguments.Append(" \"/out:" + Path.Combine(resourcePath, resourceNamespace + ".dll\""));
+				foreach (var file in files)
+					arguments.Append(" /res:" + file.Quote());
+				arguments.Append(" " + Path.Combine(resourcePath, "*.cs"));
+
+				exec(cscPath, arguments.ToString());
+
+				Console.WriteLine("Deleting temp files...");
+				// delete .resources files
+				foreach (var file in files)
+					File.Delete(file);
+				// delete .cs files
+				files = Directory.GetFiles(resourcePath, "*.cs");
+				foreach (var file in files)
+					File.Delete(file);
+			}
+			return true;
+		}
+
+		/// <summary> Generate resource lib from resources found in path. </summary>
 		private static bool generateResourceLib(string path, string outPath, string libNamespace, CultureInfo culture)
 		{
 			// generate resources
@@ -257,20 +266,28 @@ namespace ResourceCompiler
 			Console.WriteLine("Press any key to exit.");
 			Console.ReadKey();
 		}
-		/// <summary> Only sets value if key is found and not empty. </summary>
-		private static bool configTryGet(System.Collections.Specialized.NameValueCollection config, string key, ref string value)
-		{
-			string v = config[key];
-			if (v == null || v.Length == 0)
-				return false;
-			value = v;
-			return true;
-		}
 
+		/// <summary> Only sets value if key is found and not empty. </summary>
+		private static void configTryGet(System.Collections.Specialized.NameValueCollection config, string key, ref string value)
+		{
+			string str = config[key];
+			if (str != null && str.Length > 0)
+				value = str;
+		}
+		/// <summary> Only sets value if key is found and not empty, and can parse as bool. </summary>
+		private static void configTryGet(System.Collections.Specialized.NameValueCollection config, string key, ref bool value)
+		{
+			string str = config[key];
+			bool v;
+			if (str != null && str.Length > 0 && bool.TryParse(str, out v))
+				value = v;
+		}
+		/// <summary> Wraps string in quotes. </summary>
 		public static string Quote(this string str)
 		{
 			return '\"' + str + '\"';
 		}
+		/// <summary> Replaces space with _ </summary>
 		public static string ReplaceSpace(this string str)
 		{
 			return str.Replace(' ', '_');
