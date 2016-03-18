@@ -68,10 +68,18 @@ namespace ResourceCompiler
 			{
 				var name = Path.GetFileNameWithoutExtension(file);
 
-				var outfile = Path.Combine(resourcePath, resourceNamespace + "." + name + ".resources");
+				var fileNamespace = resourceNamespace;
+				var names = name.Split('.');
+				if (names.Length > 1)
+				{
+					fileNamespace = resourceNamespace + "." + string.Join(".", names.Take(names.Length - 1));
+					name = names[names.Length - 1];
+				}
+
+				var outfile = Path.Combine(resourcePath, fileNamespace + "." + name + ".resources");
 
 				var classPath = Path.Combine(resourcePath, name + ".cs");
-				var classinfo = "/str:cs," + string.Join(",", resourceNamespace, name, classPath);
+				var classinfo = "/str:cs," + string.Join(",", fileNamespace, name, classPath);
 
 				exec(resgenPath, string.Join(" ", file, outfile, classinfo, "/publicClass"));
 			}
