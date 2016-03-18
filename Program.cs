@@ -6,7 +6,7 @@ using System.Globalization;
 
 namespace ResourceCompiler
 {
-	class Program
+	static class Program
 	{
 		private static string programFilesx86
 		{
@@ -81,9 +81,9 @@ namespace ResourceCompiler
 				var outfile = Path.Combine(resourcePath, fileNamespace + "." + name + ".resources");
 
 				var classPath = Path.Combine(resourcePath, name + ".cs");
-				var classinfo = "/str:cs," + string.Join(",", fileNamespace, name, classPath);
+				var classinfo = "/str:cs," + string.Join(",", fileNamespace.ReplaceSpace(), name.ReplaceSpace(), classPath.Quote());
 
-				exec(resgenPath, string.Join(" ", file, outfile, classinfo, "/publicClass"));
+				exec(resgenPath, string.Join(" ", file.Quote(), outfile.Quote(), classinfo, "/publicClass"));
 			}
 
 
@@ -100,11 +100,11 @@ namespace ResourceCompiler
 				var arguments = new StringBuilder();
 				arguments.Append("/target:library");
 				if (resourceMainAtRoot)
-					arguments.Append(" /out:" + resourceNamespace + ".dll");
+					arguments.Append(" \"/out:" + resourceNamespace + ".dll\"");
 				else
-					arguments.Append(" /out:" + Path.Combine(resourcePath, resourceNamespace + ".dll"));
+					arguments.Append(" \"/out:" + Path.Combine(resourcePath, resourceNamespace + ".dll\""));
 				foreach (var file in files)
-					arguments.Append(" /res:" + file);
+					arguments.Append(" /res:" + file.Quote());
 				arguments.Append(" " + Path.Combine(resourcePath, "*.cs"));
 
 				exec(cscPath, arguments.ToString());
@@ -181,7 +181,7 @@ namespace ResourceCompiler
 			foreach (var file in files)
 			{
 				var outfile = Path.Combine(outPath, libNamespace + "." + Path.GetFileNameWithoutExtension(file) + "." + culture.Name + ".resources");
-				exec(resgenPath, file + " " + outfile);
+				exec(resgenPath, file.Quote() + " " + outfile.Quote());
 			}
 
 			// link resources to lib
@@ -193,11 +193,13 @@ namespace ResourceCompiler
 			arguments.Append("/target:lib /culture:");
 			arguments.Append(culture.Name);
 			arguments.Append(" /out:");
-			arguments.Append(Path.Combine(outPath, libNamespace + ".resources.dll"));
+			arguments.Append(Path.Combine(outPath, libNamespace + ".resources.dll").Quote());
 			foreach (var file in files)
 			{
 				arguments.Append(" /embed:");
-				arguments.Append(file);
+				arguments.Append(file.Quote());
+				arguments.Append(',');
+				arguments.Append(Path.GetFileName(file).ReplaceSpace());
 			}
 			exec(alPath, arguments.ToString());
 			Console.WriteLine("Delete temp resource files..");
@@ -263,6 +265,15 @@ namespace ResourceCompiler
 				return false;
 			value = v;
 			return true;
+		}
+
+		public static string Quote(this string str)
+		{
+			return '\"' + str + '\"';
+		}
+		public static string ReplaceSpace(this string str)
+		{
+			return str.Replace(' ', '_');
 		}
 	}
 }
