@@ -2,6 +2,7 @@
 using System.Linq;
 using System.Text;
 using System.IO;
+using System.Globalization;
 
 namespace ResourceCompiler
 {
@@ -23,6 +24,7 @@ namespace ResourceCompiler
 		private static readonly string alPath = Path.Combine(sdkPath, "al.exe");
 		private static readonly string cscPath = Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "csc.exe");
 
+		private static bool resourceMainAtRoot = true;
 		private static string resourceNamespace = "MyResources";
 		private static string resourcePath = "Resources";
 		private static string resourceSourcePath = null;
@@ -97,7 +99,10 @@ namespace ResourceCompiler
 
 				var arguments = new StringBuilder();
 				arguments.Append("/target:library");
-				arguments.Append(" /out:" + resourceNamespace + ".dll");
+				if (resourceMainAtRoot)
+					arguments.Append(" /out:" + resourceNamespace + ".dll");
+				else
+					arguments.Append(" /out:" + Path.Combine(resourcePath, resourceNamespace + ".dll"));
 				foreach (var file in files)
 					arguments.Append(" /res:" + file);
 				arguments.Append(" " + Path.Combine(resourcePath, "*.cs"));
@@ -115,56 +120,31 @@ namespace ResourceCompiler
 			}
 
 			// Generate resources for soecific cultures.
-			var subDir = Directory.GetDirectories(resourceSourcePath, "*", SearchOption.TopDirectoryOnly);
-			foreach (var dir in subDir)
+			var cultureDirectories = Directory.GetDirectories(resourceSourcePath, "*", SearchOption.TopDirectoryOnly);
+			foreach (var cultureDirectory in cultureDirectories)
 			{
-				string name = Path.GetFileName(dir);
+				string name = Path.GetFileName(cultureDirectory);
 				try
 				{
 					// get culture
-					var culture = System.Globalization.CultureInfo.GetCultureInfo(name);
+					var culture = CultureInfo.GetCultureInfo(name);
 					var outPath = Path.Combine(resourcePath, culture.Name);
 					Directory.CreateDirectory(outPath);
 
-					// generate resources
-					files = getRawResourcesFiles(dir, SearchOption.TopDirectoryOnly);
-					if (files.Length == 0)
-					{
+					bool empty = true;
+					if (generateResourceLib(cultureDirectory, outPath, resourceNamespace, culture))
+						empty = false;
+
+					// use culture sub directories as other assemblies.
+					var subDir = Directory.GetDirectories(cultureDirectory, "*", SearchOption.TopDirectoryOnly);
+					foreach (var dir in subDir)
+						if (generateResourceLib(dir, outPath, Path.GetFileName(dir), culture))
+							empty = false;
+
+					if (empty)
 						Console.WriteLine("Culture \"" + culture.Name + "\" had no resources!");
-						continue;
-					}
-					else
-						Console.WriteLine("\nGenerating resources for culture \"" + culture.Name + "\"...");
-					foreach (var file in files)
-					{
-						var outfile = Path.Combine(outPath, resourceNamespace + "." + Path.GetFileNameWithoutExtension(file) + "." + name + ".resources");
-						exec(resgenPath, file + " " + outfile);
-					}
-
-					// link resources to lib
-					files = Directory.GetFiles(outPath, "*.resources", SearchOption.TopDirectoryOnly);
-					if (files.Length == 0)
-					{
-						Console.WriteLine("Error culture \"" + culture.Name + "\" had no resources build!");
-						continue;
-					}
-
-					var arguments = new StringBuilder();
-					arguments.Append("/target:lib /culture:");
-					arguments.Append(culture.Name);
-					arguments.Append(" /out:");
-					arguments.Append(Path.Combine(outPath, resourceNamespace + ".resources.dll"));
-					foreach (var file in files)
-					{
-						arguments.Append(" /embed:");
-						arguments.Append(file);
-					}
-					exec(alPath, arguments.ToString());
-					Console.WriteLine("Delete temp resource files..");
-					foreach (var file in files)
-						File.Delete(file);
 				}
-				catch (System.Globalization.CultureNotFoundException)
+				catch (CultureNotFoundException)
 				{
 					Console.WriteLine("Error: \"" + name + "\" is not a valid culture name!");
 				}
@@ -188,6 +168,42 @@ namespace ResourceCompiler
 			else
 				return true;
 			return false;
+		}
+
+		private static bool generateResourceLib(string path, string outPath, string libNamespace, CultureInfo culture)
+		{
+			// generate resources
+			var files = getRawResourcesFiles(path, SearchOption.TopDirectoryOnly);
+			if (files.Length == 0)
+				return false;
+			else
+				Console.WriteLine("\nGenerating resources for culture \"" + culture.Name + "\"...");
+			foreach (var file in files)
+			{
+				var outfile = Path.Combine(outPath, libNamespace + "." + Path.GetFileNameWithoutExtension(file) + "." + culture.Name + ".resources");
+				exec(resgenPath, file + " " + outfile);
+			}
+
+			// link resources to lib
+			files = Directory.GetFiles(outPath, "*.resources", SearchOption.TopDirectoryOnly);
+			if (files.Length == 0)
+				return false;
+
+			var arguments = new StringBuilder();
+			arguments.Append("/target:lib /culture:");
+			arguments.Append(culture.Name);
+			arguments.Append(" /out:");
+			arguments.Append(Path.Combine(outPath, libNamespace + ".resources.dll"));
+			foreach (var file in files)
+			{
+				arguments.Append(" /embed:");
+				arguments.Append(file);
+			}
+			exec(alPath, arguments.ToString());
+			Console.WriteLine("Delete temp resource files..");
+			foreach (var file in files)
+				File.Delete(file);
+			return true;
 		}
 
 		/// <summary> Gets all files with .txt .restext .resx extensions.  </summary>
